@@ -617,6 +617,17 @@ class MouseRequestHandler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = HTTPServer(("127.0.0.1", 3000), MouseRequestHandler)
-    print("Attack Shark X3 Native-Web Server running on http://127.0.0.1:3000")
-    server.serve_forever()
+    import sys
+
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w")
+    try:
+        server = HTTPServer(("127.0.0.1", 3000), MouseRequestHandler)
+        print("Attack Shark X3 Native-Web Server running on http://127.0.0.1:3000")
+        server.serve_forever()
+    except OSError:
+        # Port 3000 is already bound by an active instance
+        sys.exit(0)
+
