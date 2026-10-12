@@ -23,6 +23,8 @@ import {
   TransportKind
 } from './transport/types';
 
+import { HardwareTesterLab } from './components/HardwareTesterLab';
+
 type NavTab =
   | 'dashboard'
   | 'performance'
@@ -30,6 +32,7 @@ type NavTab =
   | 'profiles'
   | 'device'
   | 'diagnostics'
+  | 'tester'
   | 'classic';
 
 function dpiToVisualPercent(dpi: number): number {
@@ -630,6 +633,7 @@ export const App: React.FC = () => {
       <nav className="x3-subnav">
         {[
           { id: 'classic', label: 'Classic X3 App View' },
+          { id: 'tester', label: 'Hardware Tester Lab' },
           { id: 'dashboard', label: 'Dashboard' },
           { id: 'performance', label: 'Performance & Sensor' },
           { id: 'buttons', label: 'Button Mapping' },
@@ -1414,6 +1418,15 @@ export const App: React.FC = () => {
             </div>
           </div>
         </main>
+      )}
+
+      {/* VIEW 8: INTERACTIVE HARDWARE VERIFICATION LAB */}
+      {activeTab === 'tester' && (
+        <HardwareTesterLab
+          profile={prof}
+          updateProfileData={updateProfileData}
+          applyToHardware={applyToHardware}
+        />
       )}
 
       {/* Macro Manager Modal */}
