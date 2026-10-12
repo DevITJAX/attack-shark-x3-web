@@ -1,5 +1,8 @@
 # Open-Source Attack Shark X3 Web Configurator
 
+**Live Web App:** **[https://devitjax.github.io/attack-shark-x3-web/](https://devitjax.github.io/attack-shark-x3-web/)**  
+**Repository:** **[https://github.com/DevITJAX/attack-shark-x3-web](https://github.com/DevITJAX/attack-shark-x3-web)**
+
 A browser-based hardware configurator and reverse-engineered USB/HID protocol suite for the **Attack Shark X3** wireless/wired gaming mouse (PixArt PAW3395 sensor, Compx/BK3633 dual-mode architecture).
 
 Built with **TypeScript, React, Vite, Vitest, WebHID, and a lightweight Python Win32 HID Bridge (`server.py`)** to replace the proprietary `X3.exe` Windows desktop utility.
