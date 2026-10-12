@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ATTACK SHARK X3 — Web Driver & Hardware Control</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="root">
+  <div class="x3-window">
+    <!-- Top Header Bar -->
+    <header class="x3-header">
+      <div class="header-left">
+        <div class="conn-badge" id="connBadge" title="Attack Shark X3 Hardware Bridge">
+          <span class="conn-dot" id="connDot"></span>
+          <span id="connText">Connecting...</span>
+        </div>
+      </div>
+
+      <div class="brand-logo">
+        <!-- Shark Fin + ATTACK SHARK Wordmark + Wave -->
+        <svg class="shark-svg" viewBox="0 0 320 68" xmlns="http://www.w3.org/2000/svg">
+          <!-- Shark Fin Icon -->
+          <path d="M44 8 C28 18, 16 38, 12 60 L25 60 C28 45, 34 33, 43 24 C41 37, 42 49, 46 60 L60 60 C55 44, 53 25, 58 8 Z" fill="#ffffff"/>
+          <path d="M24 44 Q36 39 49 45" stroke="#232323" stroke-width="3" fill="none"/>
+          <!-- Text -->
+          <text x="68" y="42" fill="#ffffff" font-family="'Segoe UI', Arial, sans-serif" font-weight="900" font-style="italic" font-size="23" letter-spacing="1.5">ATTACK SHARK</text>
+          <!-- Zig-zag wave under ATTACK -->
+          <polyline points="69,53 74,49 79,53 84,49 89,53 94,49 99,53 104,49 109,53 114,49 119,53" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+
+      <div class="header-right">
+        <button class="icon-btn wireless-icon" id="wirelessBtn" title="2.4GHz / Wired Hardware Status (Click to refresh)">
+          <svg viewBox="0 0 28 24" width="22" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+            <circle cx="14" cy="12" r="2.2" fill="currentColor" stroke="none"/>
+            <path d="M9.5 8.5 A6 6 0 0 0 9.5 15.5" />
+            <path d="M18.5 8.5 A6 6 0 0 1 18.5 15.5" />
+            <path d="M6.5 5.5 A10 10 0 0 0 6.5 18.5" />
+            <path d="M21.5 5.5 A10 10 0 0 1 21.5 18.5" />
+            <path d="M3.5 2.5 A14 14 0 0 0 3.5 21.5" />
+            <path d="M24.5 2.5 A14 14 0 0 1 24.5 21.5" />
+          </svg>
+        </button>
+        <button class="top-action-btn" id="toggleLogBtn" title="Toggle Live USB HID Packet Log">HID Log</button>
+        <button class="top-action-btn primary" id="syncAllBtn" title="Write all settings to Attack Shark X3 hardware">Apply All</button>
+      </div>
+    </header>
+
+    <!-- Main 3-Column Content Area -->
+    <main class="x3-main">
+      <!-- LEFT COLUMN: Button Settings, Macro Manager, Profile, Power -->
+      <section class="col-left">
+        <!-- Button Settings Panel -->
+        <div class="x3-panel" id="panelButtons">
+          <div class="x3-panel-header" data-toggle="panelButtons">
+            <span>Button Settings</span>
+            <button class="collapse-btn" type="button">−</button>
+          </div>
+          <div class="x3-panel-body buttons-list">
+            <div class="btn-row" data-btn-index="0">
+              <span class="btn-num">1</span>
+              <select class="btn-select" id="btnSelect0" data-btn-index="0"></select>
+            </div>
+            <div class="btn-row" data-btn-index="1">
+              <span class="btn-num">2</span>
+              <select class="btn-select" id="btnSelect1" data-btn-index="1"></select>
+            </div>
+            <div class="btn-row" data-btn-index="2">
+              <span class="btn-num">3</span>
+              <select class="btn-select" id="btnSelect2" data-btn-index="2"></select>
+            </div>
+            <div class="btn-row" data-btn-index="3">
+              <span class="btn-num">4</span>
+              <select class="btn-select" id="btnSelect3" data-btn-index="3"></select>
+            </div>
+            <div class="btn-row" data-btn-index="4">
+              <span class="btn-num">5</span>
+              <select class="btn-select" id="btnSelect4" data-btn-index="4"></select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Macro Manager Button -->
+        <button class="macro-manager-btn" id="macroManagerBtn" type="button">Macro Manager</button>
+
+        <!-- Profile Panel -->
+        <div class="x3-panel" id="panelProfile">
+          <div class="x3-panel-header" data-toggle="panelProfile">
+            <span>Profile</span>
+            <button class="collapse-btn" type="button">−</button>
+          </div>
+          <div class="x3-panel-body profile-body">
+            <div class="profile-listbox" id="profileListbox"></div>
+            <div class="profile-toolbar">
+              <button class="prof-tool-btn" id="profAddBtn" title="New Profile" type="button">+</button>
+              <button class="prof-tool-btn" id="profDelBtn" title="Delete Profile" type="button">🗑</button>
+              <button class="prof-tool-btn" id="profRenBtn" title="Rename Profile" type="button">✎</button>
+              <button class="prof-tool-btn" id="profExpBtn" title="Export Profile" type="button">📤</button>
+              <button class="prof-tool-btn" id="profImpBtn" title="Import Profile" type="button">📥</button>
+              <button class="prof-tool-btn" id="profResetBtn" title="Reset to Factory Defaults" type="button">↻</button>
+              <input type="file" id="profImpInput" accept=".json" style="display:none" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Power Panel -->
+        <div class="x3-panel" id="panelPower">
+          <div class="x3-panel-header" data-toggle="panelPower">
+            <span>Power</span>
+            <button class="collapse-btn" type="button">−</button>
+          </div>
+          <div class="x3-panel-body power-body" id="powerWidget" title="Click to query live battery from mouse hardware">
+            <div class="battery-graphic">
+              <div class="battery-shell">
+                <div class="battery-fill" id="batteryFill" style="width: 90%;"></div>
+              </div>
+              <div class="battery-cap"></div>
+            </div>
+            <div class="battery-percent" id="batteryPercentText">90%</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- CENTER COLUMN: Attack Shark X3 Mouse Diagram with Red Callouts 1..5 -->
+      <section class="col-center">
+        <div class="mouse-stage">
+          <svg class="mouse-svg" viewBox="0 0 320 560" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <!-- Subtle 3D shading gradients for white Attack Shark X3 body -->
+              <radialGradient id="mouseBodyGrad" cx="50%" cy="38%" r="60%" fx="45%" fy="30%">
+                <stop offset="0%" stop-color="#ffffff" />
+                <stop offset="65%" stop-color="#f2f2f2" />
+                <stop offset="92%" stop-color="#d9d9d9" />
+                <stop offset="100%" stop-color="#bcbcbc" />
+              </radialGradient>
+              <linearGradient id="buttonShellGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stop-color="#eaeaea" />
+                <stop offset="40%" stop-color="#ffffff" />
+                <stop offset="100%" stop-color="#efefef" />
+              </linearGradient>
+              <linearGradient id="wheelGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#181818" />
+                <stop offset="22%" stop-color="#3a3a3a" />
+                <stop offset="50%" stop-color="#141414" />
+                <stop offset="78%" stop-color="#3a3a3a" />
+                <stop offset="100%" stop-color="#181818" />
+              </linearGradient>
+              <filter id="mouseShadow" x="-15%" y="-10%" width="130%" height="125%">
+                <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#000000" flood-opacity="0.65" />
+              </filter>
+            </defs>
+
+            <!-- Side Thumb Buttons (4 = Front, 5 = Rear) -->
+            <path d="M59 225 C54 227, 53 235, 53 252 C53 268, 54 276, 59 278 L65 278 L65 225 Z" fill="#e8e8e8" stroke="#999" stroke-width="1.2" />
+            <path d="M59 283 C54 285, 53 295, 54 314 C55 328, 57 336, 61 338 L67 338 L67 283 Z" fill="#e4e4e4" stroke="#999" stroke-width="1.2" />
+
+            <!-- Main Outer Shell Silhouette -->
+            <path d="M160 46
+                     C218 46, 252 76, 256 138
+                     C259 186, 252 232, 249 278
+                     C246 322, 260 374, 257 426
+                     C253 488, 216 526, 160 526
+                     C104 526, 67 488, 63 426
+                     C60 374, 74 322, 71 278
+                     C68 232, 61 186, 64 138
+                     C68 76, 102 46, 160 46 Z"
+                  fill="url(#mouseBodyGrad)"
+                  stroke="#b5b5b5"
+                  stroke-width="1.5"
+                  filter="url(#mouseShadow)" />
+
+            <!-- Left & Right Click Comfort Grooves / Seams -->
+            <path d="M64 146
+                     L64 238
+                     C64 256, 73 266, 94 268
+                     L146 272
+                     L146 95
+                     L160 95
+                     L160 46"
+                  fill="url(#buttonShellGrad)"
+                  stroke="#333333"
+                  stroke-width="1.6" />
+
+            <path d="M256 146
+                     L256 238
+                     C256 256, 247 266, 226 268
+                     L174 272
+                     L174 95
+                     L160 95
+                     L160 46"
+                  fill="url(#buttonShellGrad)"
+                  stroke="#333333"
+                  stroke-width="1.6" />
+
+            <!-- Center Scroll Wheel Island -->
+            <rect x="144" y="94" width="32" height="178" rx="16" fill="#f7f7f7" stroke="#444444" stroke-width="1.5" />
+
+            <!-- Scroll Wheel Slot -->
+            <rect x="148" y="103" width="24" height="78" rx="9" fill="#1a1a1a" stroke="#555555" stroke-width="1" />
+
+            <!-- Scroll Wheel Body -->
+            <rect x="150" y="107" width="20" height="70" rx="6" fill="url(#wheelGrad)" stroke="#d0d0d0" stroke-width="1" />
+            <!-- Scroll Wheel Treads -->
+            <g stroke="#2a2a2a" stroke-width="2">
+              <line x1="152" y1="115" x2="168" y2="115" />
+              <line x1="152" y1="122" x2="168" y2="122" />
+              <line x1="152" y1="129" x2="168" y2="129" />
+              <line x1="152" y1="136" x2="168" y2="136" />
+              <line x1="152" y1="143" x2="168" y2="143" />
+              <line x1="152" y1="150" x2="168" y2="150" />
+              <line x1="152" y1="157" x2="168" y2="157" />
+              <line x1="152" y1="164" x2="168" y2="164" />
+              <line x1="152" y1="171" x2="168" y2="171" />
+            </g>
+
+            <!-- Status / DPI LED Indicator Pill below wheel -->
+            <rect id="mouseLedPill" x="157.5" y="236" width="5" height="16" rx="2.5" fill="#00d8ff" />
+
+            <!-- Interactive Red Callout Badges (1..5) -->
+            <g class="mouse-callout" data-btn-index="0">
+              <circle cx="114" cy="146" r="14" fill="#e61010" />
+              <text x="114" y="151" text-anchor="middle" fill="#ffffff" font-size="14" font-weight="700">1</text>
+            </g>
+            <g class="mouse-callout" data-btn-index="2">
+              <circle cx="160" cy="146" r="14" fill="#e61010" />
+              <text x="160" y="151" text-anchor="middle" fill="#ffffff" font-size="14" font-weight="700">3</text>
+            </g>
+            <g class="mouse-callout" data-btn-index="1">
+              <circle cx="206" cy="146" r="14" fill="#e61010" />
+              <text x="206" y="151" text-anchor="middle" fill="#ffffff" font-size="14" font-weight="700">2</text>
+            </g>
+            <g class="mouse-callout" data-btn-index="3">
+              <circle cx="56" cy="242" r="14" fill="#e61010" />
+              <text x="56" y="247" text-anchor="middle" fill="#ffffff" font-size="14" font-weight="700">4</text>
+            </g>
+            <g class="mouse-callout" data-btn-index="4">
+              <circle cx="56" cy="306" r="14" fill="#e61010" />
+              <text x="56" y="311" text-anchor="middle" fill="#ffffff" font-size="14" font-weight="700">5</text>
+            </g>
+          </svg>
+        </div>
+      </section>
+
+      <!-- RIGHT COLUMN: DPI Vertical Sliders + Collapsible Settings Accordions -->
+      <section class="col-right">
+        <!-- DPI Vertical Sliders Card -->
+        <div class="dpi-card">
+          <div class="dpi-columns" id="dpiColumns">
+            <!-- Dynamically populated by app.js for the 6 stages -->
+          </div>
+          <div class="dpi-apply-row">
+            <button class="dpi-apply-btn" id="dpiApplyBtn" type="button">Apply</button>
+          </div>
+        </div>
+
+        <!-- Polling Rate Settings (Collapsed by default like screenshot, click to expand) -->
+        <div class="x3-panel collapsed" id="panelPolling">
+          <div class="x3-panel-header" data-toggle="panelPolling">
+            <span>Polling Rate Settings</span>
+            <button class="collapse-btn" type="button">−</button>
+          </div>
+          <div class="x3-panel-body radio-grid-4">
+            <label class="x3-radio">
+              <input type="radio" name="pollingRate" value="125" />
+              <span class="radio-dot"></span>
+              <span>125Hz</span>
+            </label>
+            <label class="x3-radio">
+              <input type="radio" name="pollingRate" value="250" />
+              <span class="radio-dot"></span>
+              <span>250Hz</span>
+            </label>
+            <label class="x3-radio">
+              <input type="radio" name="pollingRate" value="500" />
+              <span class="radio-dot"></span>
+              <span>500Hz</span>
+            </label>
+            <label class="x3-radio">
+              <input type="radio" name="pollingRate" value="1000" checked />
+              <span class="radio-dot"></span>
+              <span>1000Hz</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Mouse Attribute (Collapsed by default like screenshot) -->
+        <div class="x3-panel collapsed" id="panelMouseAttr">
+          <div class="x3-panel-header" data-toggle="panelMouseAttr">
+            <span>Mouse Attribute</span>
+            <button class="collapse-btn" type="button">−</button>
+          </div>
+          <div class="x3-panel-body attr-body">
+            <div class="attr-row">
+              <div class="attr-label">
+                <span>Moving Speed</span>
+                <span id="ptrSpeedVal">10</span>
+              </div>
+              <input type="range" class="x3-hslider" id="ptrSpeedSlider" min="1" max="20" value="10" />
+            </div>
+            <div class="attr-row">
+              <div class="attr-label">
+                <span>Double Click Speed</span>
+                <span id="dblClickVal">500 ms</span>
+              </div>
+              <input type="range" class="x3-hslider" id="dblClickSlider" min="200" max="900" step="50" value="500" />
+            </div>
+            <div class="attr-row">
+              <div class="attr-label">
+                <span>Rolling Speed</span>
+                <span id="scrollLinesVal">3</span>
+              </div>
+              <input type="range" class="x3-hslider" id="scrollLinesSlider" min="1" max="10" value="3" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Power Management (Collapsed by default like screenshot) -->
+        <div class="x3-panel collapsed" id="panelPowerMgmt">
+          <div class="x3-panel-header" data-toggle="panelPowerMgmt">
+            <span>Power Management</span>
+            <button class="collapse-btn" type="button">−</button>
+          </div>
+          <div class="x3-panel-body attr-body">
+            <div class="attr-row">
+              <div class="attr-label">
+                <span>Hibernate / Sleep Time</span>
+                <span id="sleepTimeLabel">1 Min</span>
+              </div>
+              <select class="btn-select full-width" id="sleepTimeSelect">
+                <option value="1" selected>1 Minute</option>
+                <option value="3">3 Minutes</option>
+                <option value="5">5 Minutes</option>
+                <option value="10">10 Minutes</option>
+                <option value="15">15 Minutes</option>
+                <option value="30">30 Minutes</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Lift Of Distance (Expanded by default like screenshot) -->
+        <div class="x3-panel" id="panelLod">
+          <div class="x3-panel-header" data-toggle="panelLod">
+            <span>Lift Of Distance</span>
+            <button class="collapse-btn" type="button">−</button>
+          </div>
+          <div class="x3-panel-body radio-pair">
+            <label class="x3-radio">
+              <input type="radio" name="lod" value="1" checked />
+              <span class="radio-dot"></span>
+              <span>1 MM</span>
+            </label>
+            <label class="x3-radio">
+              <input type="radio" name="lod" value="2" />
+              <span class="radio-dot"></span>
+              <span>2 MM</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Key Response Time (Expanded by default like screenshot) -->
+        <div class="x3-panel" id="panelDebounce">
+          <div class="x3-panel-header" data-toggle="panelDebounce">
+            <span>Key Response Time</span>
+            <button class="collapse-btn" type="button">−</button>
+          </div>
+          <div class="x3-panel-body debounce-body">
+            <div class="debounce-slider-wrap">
+              <input type="range" class="x3-hslider" id="debounceSlider" min="2" max="20" step="2" value="8" />
+            </div>
+            <div class="debounce-value-box" id="debounceValueBox">8 MS</div>
+          </div>
+        </div>
+
+        <!-- Ripple Control (Expanded by default like screenshot) -->
+        <div class="x3-panel" id="panelRipple">
+          <div class="x3-panel-header" data-toggle="panelRipple">
+            <span>Ripple Control</span>
+            <button class="collapse-btn" type="button">−</button>
+          </div>
+          <div class="x3-panel-body radio-pair">
+            <label class="x3-radio">
+              <input type="radio" name="rippleControl" value="0" checked />
+              <span class="radio-dot"></span>
+              <span>Off</span>
+            </label>
+            <label class="x3-radio">
+              <input type="radio" name="rippleControl" value="1" />
+              <span class="radio-dot"></span>
+              <span>On</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Angle Snap (Expanded by default like screenshot) -->
+        <div class="x3-panel" id="panelAngleSnap">
+          <div class="x3-panel-header" data-toggle="panelAngleSnap">
+            <span>Angle Snap</span>
+            <button class="collapse-btn" type="button">−</button>
+          </div>
+          <div class="x3-panel-body radio-pair">
+            <label class="x3-radio">
+              <input type="radio" name="angleSnap" value="0" checked />
+              <span class="radio-dot"></span>
+              <span>Off</span>
+            </label>
+            <label class="x3-radio">
+              <input type="radio" name="angleSnap" value="1" />
+              <span class="radio-dot"></span>
+              <span>On</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Motion Sync (Expanded by default like screenshot) -->
+        <div class="x3-panel" id="panelMotionSync">
+          <div class="x3-panel-header" data-toggle="panelMotionSync">
+            <span>Motion Sync</span>
+            <button class="collapse-btn" type="button">−</button>
+          </div>
+          <div class="x3-panel-body radio-pair">
+            <label class="x3-radio">
+              <input type="radio" name="motionSync" value="0" checked />
+              <span class="radio-dot"></span>
+              <span>Off</span>
+            </label>
+            <label class="x3-radio">
+              <input type="radio" name="motionSync" value="1" />
+              <span class="radio-dot"></span>
+              <span>On</span>
+            </label>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Collapsible Bottom USB HID Packet Log Drawer -->
+    <section class="hid-drawer hidden" id="hidDrawer">
+      <div class="hid-drawer-header">
+        <span>Live Hardware Feature Report &amp; Input Event Log (`HidD_SetFeature` / `col03`)</span>
+        <div class="hid-drawer-actions">
+          <button class="mini-btn" id="clearLogBtn" type="button">Clear</button>
+          <button class="mini-btn" id="closeLogBtn" type="button">×</button>
+        </div>
+      </div>
+      <div class="hid-log-entries" id="hidLogEntries"></div>
+    </section>
+  </div>
+
+  <!-- Macro Manager Modal -->
+  <div class="modal-backdrop hidden" id="macroModal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span>Macro Manager</span>
+        <button class="collapse-btn" id="closeMacroModalBtn" type="button">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="macro-col">
+          <div class="macro-subtitle">Macro List</div>
+          <div class="macro-list" id="macroList"></div>
+          <div class="macro-btn-row">
+            <button class="dpi-apply-btn" id="newMacroBtn" type="button">New</button>
+            <button class="dpi-apply-btn" id="delMacroBtn" type="button">Delete</button>
+          </div>
+        </div>
+        <div class="macro-col wide">
+          <div class="macro-subtitle">Key Sequence (Click "Record" and press keys)</div>
+          <div class="macro-events" id="macroEvents"></div>
+          <div class="macro-btn-row">
+            <button class="dpi-apply-btn" id="recMacroBtn" type="button">Start Record</button>
+            <button class="dpi-apply-btn" id="clearMacroEventsBtn" type="button">Clear Keys</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Status Notification -->
+  <div class="toast-msg hidden" id="toastMsg"></div>
+  </div>
+
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>
