@@ -137,6 +137,52 @@ body {
   background: #dc1414;
 }
 
+.top-action-btn.secondary {
+  background: #2a3b4c;
+  border-color: #3b5a7a;
+  color: #70c4ff;
+  font-weight: 500;
+}
+
+.top-action-btn.secondary:hover {
+  background: #354d66;
+  border-color: #5280b2;
+}
+
+.top-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.readback-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.readback-badge.hardware {
+  background: rgba(30, 200, 80, 0.15);
+  border: 1px solid #1ec850;
+  color: #38e870;
+}
+
+.readback-badge.saved {
+  background: rgba(50, 150, 255, 0.15);
+  border: 1px solid #3296ff;
+  color: #64b4ff;
+}
+
+.readback-badge.defaults {
+  background: rgba(255, 170, 0, 0.15);
+  border: 1px solid #ffaa00;
+  color: #ffc030;
+}
+
+
 /* Main 3-Column Layout */
 .x3-main {
   flex: 1;

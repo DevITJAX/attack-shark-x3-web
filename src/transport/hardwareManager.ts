@@ -10,8 +10,10 @@ import {
   buildPollingRatePacket,
   buildQueryStatusPacket,
   parseInputReport03,
-  toHexString
+  toHexString,
+  ReadProfileResponse
 } from '../protocol/x3Protocol';
+
 import {
   ApplyTarget,
   DeviceStatus,
@@ -274,7 +276,61 @@ export class AttackSharkHardwareManager {
     return { ok: false, batteryPercent: this.mockBattery, charging: this.mockCharging, hex };
   }
 
+  public async readProfile(): Promise<ReadProfileResponse> {
+    const DEFAULT_RESPONSE: ReadProfileResponse = {
+      source: 'defaults',
+      profile: {
+        stages: [800, 1600, 2400, 3200, 5000, 26000],
+        stageColors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#00ffff', '#ff00ff'],
+        activeStage: 1,
+        pollingRate: 1000,
+        lod: 1,
+        debounce: 8,
+        rippleControl: false,
+        angleSnap: false,
+        motionSync: false,
+        sleepMinutes: 1,
+        pointerSpeed: 10,
+        doubleClickSpeed: 500,
+        scrollLines: 3,
+        buttons: [1, 2, 3, 5, 4]
+      },
+      proDataAvailable: false,
+      proDataError: 'Not available in this transport mode',
+      featureReadDiagnostics: [],
+      warnings: ['readProfile() is only supported in Native Bridge mode.']
+    };
+
+    if (this.mode === 'mock' || this.mode === 'webhid') {
+      return {
+        ...DEFAULT_RESPONSE,
+        warnings: [`readProfile() not supported in ${this.mode} mode; using defaults.`]
+      };
+    }
+
+    // Native Bridge mode
+    const bridgeBase =
+      typeof window !== 'undefined' &&
+      window.location.port !== '3000' &&
+      window.location.port !== '5173'
+        ? 'http://127.0.0.1:3000'
+        : '';
+    try {
+      const resp = await fetch(`${bridgeBase}/api/read-profile`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data: ReadProfileResponse = await resp.json();
+      return data;
+    } catch (err: any) {
+      return {
+        ...DEFAULT_RESPONSE,
+        proDataError: `Bridge unreachable: ${err?.message || err}`,
+        warnings: ['Local hardware bridge (server.py) is unreachable.']
+      };
+    }
+  }
+
   public async applyConfiguration(target: ApplyTarget, profile: MouseProfileData): Promise<ApplyResponse> {
+
     const buttonsWithDpi = [...profile.buttons.slice(0, 5), 6];
     const bridgeBase =
       typeof window !== 'undefined' &&

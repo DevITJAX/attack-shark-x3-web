@@ -8,8 +8,14 @@ import {
   parseInputReport03,
   clampDpiValue,
   hasLeftClickAssigned,
-  toHexString
+  toHexString,
+  decodeDpiSensorPacket,
+  decodeDebounceSleepPacket,
+  decodePollingRatePacket,
+  decodeButtonMappingPacket,
+  PollingRateHz
 } from './x3Protocol';
+
 
 describe('Attack Shark X3 Protocol Suite (Verified against X3.exe)', () => {
   it('encodes Report 0x0C (10-byte status/battery query) identically to X3.exe 0x4132b0', () => {
@@ -108,4 +114,78 @@ describe('Attack Shark X3 Protocol Suite (Verified against X3.exe)', () => {
     expect(clampDpiValue(1624)).toBe(1600);
     expect(clampDpiValue(1626)).toBe(1650);
   });
+
+  describe('Hardware Readback Decoding & Round-Trip', () => {
+    it('round-trips Report 0x06 (polling rate): encode -> decode matches', () => {
+      const rates: PollingRateHz[] = [125, 250, 500, 1000];
+      for (const hz of rates) {
+        const pkt = buildPollingRatePacket(hz);
+        const decoded = decodePollingRatePacket(pkt);
+        expect(decoded).toBe(hz);
+      }
+    });
+
+    it('round-trips Report 0x05 (debounce & sleep): encode -> decode matches', () => {
+      const testCases = [
+        { debounce: 4, sleep: 1 },
+        { debounce: 8, sleep: 5 },
+        { debounce: 12, sleep: 15 },
+        { debounce: 20, sleep: 30 }
+      ];
+
+      for (const tc of testCases) {
+        const pkt = buildDebounceSleepPacket(tc.debounce, tc.sleep);
+        const decoded = decodeDebounceSleepPacket(pkt);
+        expect(decoded.debounceMs).toBe(tc.debounce);
+        expect(decoded.sleepIndex).toBe(tc.sleep);
+      }
+    });
+
+    it('round-trips Report 0x04 (DPI & sensor): encode -> decode matches', () => {
+      const inputConfig = {
+        activeStage: 2, // Stage 3
+        stages: [400, 800, 1600, 3200, 6400, 26000],
+        stageColors: ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#00ffff', '#ff00ff'],
+        lod: 2 as const,
+        motionSync: true,
+        rippleControl: true,
+        angleSnap: true
+      };
+
+      const pkt = buildDpiSensorPacket(inputConfig);
+      const decoded = decodeDpiSensorPacket(pkt);
+
+      expect(decoded.activeStage).toBe(2);
+      expect(decoded.stages).toEqual(inputConfig.stages);
+      expect(decoded.lod).toBe(2);
+      expect(decoded.motionSync).toBe(true);
+      expect(decoded.rippleControl).toBe(true);
+      expect(decoded.angleSnap).toBe(true);
+      expect(decoded.stageColors).toEqual(inputConfig.stageColors);
+    });
+
+    it('round-trips Report 0x08 (button mapping): encode -> decode matches 5 primary buttons', () => {
+      // Buttons: Left(1), Right(2), Middle(3), Forward(5), Backward(4)
+      const buttons = [1, 2, 3, 5, 4];
+      const pkt = buildButtonMappingPacket([...buttons, 6]);
+      const decoded = decodeButtonMappingPacket(pkt);
+      expect(decoded).toEqual(buttons);
+    });
+
+    it('round-trips custom button mappings through Report 0x08', () => {
+      // Custom: Left(1), Right(2), Middle(10=Vol+), Forward(11=Vol-), Backward(12=Mute)
+      const customButtons = [1, 2, 10, 11, 12];
+      const pkt = buildButtonMappingPacket([...customButtons, 6]);
+      const decoded = decodeButtonMappingPacket(pkt);
+      expect(decoded).toEqual(customButtons);
+    });
+
+    it('handles truncated or invalid packets safely', () => {
+      expect(() => decodeDpiSensorPacket(new Uint8Array([0x04, 0x01]))).toThrow(RangeError);
+      expect(() => decodeDebounceSleepPacket(new Uint8Array([0x05, 0x01]))).toThrow(RangeError);
+      expect(() => decodePollingRatePacket(new Uint8Array([0x06]))).toThrow(RangeError);
+      expect(() => decodeButtonMappingPacket(new Uint8Array([0x08]))).toThrow(RangeError);
+    });
+  });
 });
+

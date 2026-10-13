@@ -3,6 +3,7 @@ import {
   BUTTON_ACTION_OPTIONS,
   LiftOffDistanceMm,
   PollingRateHz,
+  ReadProfileResponse,
   buildButtonMappingPacket,
   buildDebounceSleepPacket,
   buildDpiSensorPacket,
@@ -11,6 +12,7 @@ import {
   hasLeftClickAssigned,
   toHexString
 } from './protocol/x3Protocol';
+
 import { AttackSharkHardwareManager } from './transport/hardwareManager';
 import {
   ApplyTarget,
@@ -100,7 +102,13 @@ export const App: React.FC = () => {
   });
   const [logs, setLogs] = useState<DiagnosticLogEntry[]>([]);
   const [toast, setToast] = useState<string | null>(null);
+  const [hardwareReadbackSource, setHardwareReadbackSource] = useState<
+    'hardware' | 'saved' | 'defaults' | null
+  >(null);
+  const [readbackPending, setReadbackPending] = useState(false);
   const seenServerEventsRef = useRef<number>(0);
+  const hasReadbackRef = useRef(false);
+
 
   const hwRef = useRef<AttackSharkHardwareManager | null>(null);
   if (!hwRef.current) {
@@ -149,12 +157,61 @@ export const App: React.FC = () => {
     ]);
   };
 
+  const handleReadFromHardware = async () => {
+    if (!hwRef.current || readbackPending) return;
+    setReadbackPending(true);
+    try {
+      const result: ReadProfileResponse = await hwRef.current.readProfile();
+
+      // Log each feature read diagnostic to the Diagnostics tab
+      for (const diag of result.featureReadDiagnostics || []) {
+        const ok = diag.ok && diag.bytes.some((b) => b !== 0);
+        addLog(
+          'RX',
+          'bridge',
+          `HidD_GetFeature ${diag.report_id} (${diag.name}, ${diag.length}B) — ${ok ? 'non-zero bytes' : 'all-zeros (write-only firmware)'}`,
+          diag.hex,
+          diag.ok
+        );
+      }
+
+      if (result.source === 'pro.data') {
+        // Merge hardware values into the active profile
+        updateProfileData(() => ({ ...result.profile } as MouseProfileData));
+        setHardwareReadbackSource('hardware');
+        showToastMsg('✅ Profile loaded from hardware (pro.data)');
+        addLog('SYS', 'bridge', 'Hardware readback OK — profile updated from pro.data', undefined, true);
+      } else {
+        setHardwareReadbackSource('defaults');
+        showToastMsg('⚠ pro.data unavailable — using saved / default profile');
+        addLog('SYS', 'bridge', `Hardware readback: ${result.proDataError || 'using defaults'}`, undefined, false);
+      }
+
+      // Log any warnings
+      for (const w of result.warnings || []) {
+        addLog('SYS', 'bridge', `Readback warning: ${w}`, undefined, false);
+      }
+    } catch (err: any) {
+      showToastMsg('Hardware readback failed');
+      addLog('SYS', 'bridge', `readProfile() error: ${err?.message || err}`, undefined, false);
+    } finally {
+      setReadbackPending(false);
+    }
+  };
+
   const refreshStatus = async () => {
     if (!hwRef.current) return;
     const st = await hwRef.current.getStatus();
     setStatus(st);
 
+    // Auto-trigger readback once on first successful bridge connection
+    if (st.transportKind === 'bridge' && st.connected && !hasReadbackRef.current) {
+      hasReadbackRef.current = true;
+      handleReadFromHardware();
+    }
+
     if (st.transportKind === 'bridge' && st.connected) {
+
       const bridgeBase =
         typeof window !== 'undefined' &&
         window.location.port !== '3000' &&
@@ -619,6 +676,36 @@ export const App: React.FC = () => {
               <path d="M24.5 2.5 A14 14 0 0 1 24.5 21.5" />
             </svg>
           </button>
+          {hardwareReadbackSource && (
+            <span
+              className={`readback-badge ${hardwareReadbackSource}`}
+              title={
+                hardwareReadbackSource === 'hardware'
+                  ? 'Profile loaded from hardware (pro.data)'
+                  : hardwareReadbackSource === 'saved'
+                  ? 'Using browser-saved profile'
+                  : 'Using factory defaults'
+              }
+            >
+              {hardwareReadbackSource === 'hardware'
+                ? '🖱 Hardware'
+                : hardwareReadbackSource === 'saved'
+                ? '💾 Saved'
+                : '⚙ Defaults'}
+            </span>
+          )}
+          <button
+            className="top-action-btn secondary"
+            onClick={handleReadFromHardware}
+            disabled={readbackPending || transportMode !== 'bridge'}
+            title={
+              transportMode !== 'bridge'
+                ? 'Readback requires Native Bridge mode'
+                : 'Read current onboard profile from mouse hardware (pro.data)'
+            }
+          >
+            {readbackPending ? '⟳ Reading…' : '⬇ Refresh from Hardware'}
+          </button>
           <button
             className="top-action-btn primary"
             onClick={() => applyToHardware('all')}
@@ -628,6 +715,7 @@ export const App: React.FC = () => {
           </button>
         </div>
       </header>
+
 
       {/* Navigation Sub-Bar (Switches between Classic Native X3 Layout and Modern Enthusiast Views) */}
       <nav className="x3-subnav">
@@ -1180,9 +1268,36 @@ export const App: React.FC = () => {
                 ))}
               </div>
             </div>
+
+            <div className="dash-card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3>Hardware Readback</h3>
+                {hardwareReadbackSource && (
+                  <span className={`readback-badge ${hardwareReadbackSource}`}>
+                    {hardwareReadbackSource === 'hardware' ? '🖱 Profile from Hardware' : hardwareReadbackSource === 'saved' ? '💾 Browser Saved' : '⚙ Defaults'}
+                  </span>
+                )}
+              </div>
+              <p className="muted-note" style={{ marginTop: 6 }}>
+                Reads the current onboard profile from{' '}
+                <code>%APPDATA%\Attack SharkX3Mouse\ms_1\pro.data</code> (the
+                same source X3.exe uses). Motion Sync, Angle Snap, and Ripple are
+                write-only on the firmware and are not restored.
+              </p>
+              <button
+                className="dpi-apply-btn"
+                type="button"
+                onClick={handleReadFromHardware}
+                disabled={readbackPending || transportMode !== 'bridge'}
+                style={{ marginTop: 8 }}
+              >
+                {readbackPending ? '⟳ Reading from hardware…' : '⬇ Refresh from Hardware'}
+              </button>
+            </div>
           </div>
         </main>
       )}
+
 
       {/* VIEW 3: PERFORMANCE & SENSOR */}
       {activeTab === 'performance' && (

@@ -258,3 +258,43 @@ To independently observe and verify any command sent by the official `X3.exe` ut
   - **Mouse Attribute** (`Moving Speed`, `Double Click Speed`, `Rolling Speed`): Applied to Windows via `SystemParametersInfoW(SPI_SETMOUSESPEED / SPI_SETWHEELSCROLLLINES)` and `SetDoubleClickTime()`, not sent over USB.
 - **Write-Only Configuration Protocol Limitation**:
   - While battery percentage, charging status (`0x4010`), physical DPI stage button presses (`0x1000`), and sleep/wake events (`0x5010`) are pushed by the mouse via Input Report `0x03`, the mouse firmware does **not** expose a bulk "read full DPI/button table from flash" command (`X3.exe` reads initial UI state from `pro.data`).
+
+---
+
+## 7. Hardware Readback Investigation & Verification (Live Physical Mouse)
+
+On 2026-10-13, live hardware tests were executed against an active Attack Shark X3 (2.4 GHz receiver, `VID_1D57&PID_FA60`, PAW3395) using Win32 `HidD_GetFeature` via `server.py`:
+
+### 7.1 HidD_GetFeature Verification Matrix
+
+| Report ID | Length | Target Collection | Win32 HidD_GetFeature Result | Error Code / Details | Readability Status |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **`0x04`** | 56 B | `mi_02&col04` (Feature) | `ok = False` | `121` (`ERROR_SEM_TIMEOUT`) | **Not Readable** (Firmware does not acknowledge GET_FEATURE) |
+| **`0x05`** | 15 B | `mi_02&col04` (Feature) | `ok = False` | `121` (`ERROR_SEM_TIMEOUT`) | **Not Readable** (Times out after ~5s) |
+| **`0x06`** | 9 B | `mi_02&col04` (Feature) | `ok = False` | `121` (`ERROR_SEM_TIMEOUT`) | **Not Readable** (Times out after ~5s) |
+| **`0x08`** | 59 B | `mi_02&col04` (Feature) | `ok = False` | `121` (`ERROR_SEM_TIMEOUT`) | **Not Readable** (Times out after ~5s) |
+| **`0x0C`** | 10 B | `mi_02&col04` (Feature) | `ok = False` | `121` (`ERROR_SEM_TIMEOUT`) | **Not Readable** (Only SET_FEATURE triggers async report 0x03 on col03) |
+| Any | — | `mi_00` .. `col03` | N/A | `FeatureReportByteLength = 0` | Collection does not define Feature Reports |
+
+### 7.2 Binary Profile Analysis (`pro.data`)
+
+Because the firmware channel is write-only, the vendor software `X3.exe` persists and restores state through `%APPDATA%\Attack SharkX3Mouse\ms_1\pro.data`. Direct binary analysis of the physical user file confirmed the exact layout:
+
+- **Struct Signature**: Little-endian `uint32 = 0x000001A4` (420 bytes)
+- **`+0x004`**: Polling rate code (`1=1000Hz, 2=500Hz, 3=250Hz, 8=125Hz`)
+- **`+0x00C`**: Stage count (`6`)
+- **`+0x02C..+0x040`**: 6 × LE `uint32` DPI step values (`(DPI // 50) - 1`)
+- **`+0x08C`**: Key Response Time / Debounce in ms (`8`)
+- **`+0x090`**: Sleep Timer Index (`6` minutes)
+- **`+0x094`**: Moving Speed / Pointer Speed (`10`)
+- **`+0x098`**: Lift-Off Distance (`1` = 1 mm, `2` = 2 mm)
+- **`+0x09C`**: Active DPI Stage index (`1` = Stage 2, 0-based)
+- **`+0x0A0`**: Rolling Speed / Scroll Lines (`3`)
+- **`+0x0C4..+0x0E0`**: 8 × LE `uint32` Stage LED Colors stored as `0x00RRGGBB`
+
+### 7.3 Multi-Tier Readback Implementation
+
+1. **Primary Source (`pro.data`)**: `%APPDATA%\Attack SharkX3Mouse\ms_1\pro.data` is parsed by `server.py` and returned via `/api/read-profile`.
+2. **Diagnostic Probe**: Reports 0x04, 0x05, 0x06, 0x08 are probed in the background (and cached) so `/api/read-profile` returns instantly while recording the firmware timeout behavior in the Diagnostics tab.
+3. **Decoders**: Both Python (`server.py`) and TypeScript (`src/protocol/x3Protocol.ts`) implement exact decoders for all four reports with unit tests covering round-trips.
+

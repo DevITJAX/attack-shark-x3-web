@@ -338,3 +338,149 @@ export function parseInputReport03(raw: Uint8Array | number[]): ParsedInputEvent
     typeLabel: 'UNKNOWN'
   };
 }
+/**
+ * Hardware Readback Response from /api/read-profile.
+ * Mirrors the server.py read_profile() return shape.
+ */
+export interface ReadProfileResponse {
+  source: 'pro.data' | 'defaults';
+  profile: import('../transport/types').MouseProfileData;
+  proDataAvailable: boolean;
+  proDataError: string | null;
+  featureReadDiagnostics: FeatureReadDiagnostic[];
+  warnings: string[];
+}
+
+export interface FeatureReadDiagnostic {
+  name: string;
+  report_id: string;
+  length: number;
+  ok: boolean;
+  error_code?: number;
+  bytes: number[];
+  hex: string;
+  note?: string;
+}
+
+// ── Reverse (Decode) Functions ────────────────────────────────────────────────
+//
+// These decode the same byte layout encoded by the build* functions above.
+// Useful for round-trip tests and for interpreting HidD_GetFeature raw bytes
+// (even if they are zeros on write-only firmware, the structure is documented).
+
+/**
+ * Decode Report 0x04 (56 bytes) → DpiSensorConfig partial.
+ *
+ * NOTE: On Attack Shark X3 firmware (PAW3395) HidD_GetFeature returns zeros for
+ * this report (write-only col04). These decoders are provided for round-trip
+ * testing and for any future firmware that does support readback.
+ */
+export function decodeDpiSensorPacket(pkt: Uint8Array): {
+  lod: LiftOffDistanceMm;
+  motionSync: boolean;
+  angleSnap: boolean;
+  rippleControl: boolean;
+  stages: number[];
+  activeStage: number; // 0-based
+  stageColors: string[];
+} {
+  if (pkt.length < 52) throw new RangeError(`Report 0x04 must be ≥52 bytes, got ${pkt.length}`);
+  if (pkt[0] !== 0x04) throw new Error(`Expected report ID 0x04, got 0x${pkt[0].toString(16)}`);
+
+  const lod: LiftOffDistanceMm = pkt[3] === 0x01 ? 2 : 1;
+  const motionSync = pkt[4] !== 0;
+  const angleSnap = pkt[6] !== 0;
+  const rippleControl = pkt[7] !== 0;
+
+  const stages: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    const lo = pkt[8 + i];
+    const hi = pkt[16 + i];
+    const step = lo | (hi << 8);
+    stages.push(clampDpiValue((step + 1) * 50));
+  }
+
+  // pkt[24] = 1-based active DPI stage (1..6); convert to 0-based
+  const activeStage = Math.max(0, Math.min(5, (pkt[24] & 0xFF) - 1));
+
+  const stageColors: string[] = [];
+  for (let i = 0; i < 6; i++) {
+    const r = pkt[25 + i * 3];
+    const g = pkt[25 + i * 3 + 1];
+    const b = pkt[25 + i * 3 + 2];
+    stageColors.push(`#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`);
+  }
+
+  return { lod, motionSync, angleSnap, rippleControl, stages, activeStage, stageColors };
+}
+
+/**
+ * Decode Report 0x05 (15 bytes) → debounce ms and sleep timer index.
+ */
+export function decodeDebounceSleepPacket(pkt: Uint8Array): {
+  debounceMs: number;
+  sleepIndex: number;
+} {
+  if (pkt.length < 11) throw new RangeError(`Report 0x05 must be ≥11 bytes, got ${pkt.length}`);
+  if (pkt[0] !== 0x05) throw new Error(`Expected report ID 0x05, got 0x${pkt[0].toString(16)}`);
+
+  // pkt[10] = debounce_ms / 2  →  debounce_ms = pkt[10] * 2, clamped to [2..20]
+  const debounceMs = Math.max(2, Math.min(20, (pkt[10] & 0xFF) * 2));
+  // pkt[9] = sleep index (1..30)
+  const sleepIndex = Math.max(1, Math.min(30, pkt[9] & 0xFF));
+  return { debounceMs, sleepIndex };
+}
+
+/**
+ * Decode Report 0x06 (9 bytes) → polling rate in Hz.
+ */
+export function decodePollingRatePacket(pkt: Uint8Array): PollingRateHz {
+  if (pkt.length < 5) throw new RangeError(`Report 0x06 must be ≥5 bytes, got ${pkt.length}`);
+  if (pkt[0] !== 0x06) throw new Error(`Expected report ID 0x06, got 0x${pkt[0].toString(16)}`);
+
+  const codeToHz: Record<number, PollingRateHz> = {
+    0x01: 1000,
+    0x02: 500,
+    0x03: 250,
+    0x08: 125
+  };
+  return codeToHz[pkt[3]] ?? 1000;
+}
+
+/** Reverse lookup: hardware 3-byte tuple → action ID (or undefined if unknown). */
+const HW_TUPLE_TO_ID: Map<string, number> = new Map(
+  BUTTON_ACTION_OPTIONS.map((opt) => [opt.tuple.join(','), opt.id])
+);
+
+/**
+ * Decode Report 0x08 (59 bytes) → 5-element UI button action ID array.
+ *
+ * Hardware slot → UI index mapping (inverse of buildButtonMappingPacket):
+ *   Slot 0 → UI 0 (Left)
+ *   Slot 1 → UI 1 (Right)
+ *   Slot 2 → UI 2 (Middle)
+ *   Slot 7 → UI 3 (Forward)
+ *   Slot 6 → UI 4 (Backward)
+ */
+export function decodeButtonMappingPacket(pkt: Uint8Array): number[] {
+  if (pkt.length < 57) throw new RangeError(`Report 0x08 must be ≥57 bytes, got ${pkt.length}`);
+  if (pkt[0] !== 0x08) throw new Error(`Expected report ID 0x08, got 0x${pkt[0].toString(16)}`);
+
+  const defaults = [1, 2, 3, 5, 4];
+  // Hardware slot indices for UI buttons [Left, Right, Middle, Forward, Backward]
+  const slotToUi: [number, number][] = [[0, 0], [1, 1], [2, 2], [7, 3], [6, 4]];
+  const result = [...defaults];
+
+  for (const [slotIdx, uiIdx] of slotToUi) {
+    const b0 = pkt[3 + slotIdx * 3];
+    const b1 = pkt[3 + slotIdx * 3 + 1];
+    const b2 = pkt[3 + slotIdx * 3 + 2];
+    const key = `${b0},${b1},${b2}`;
+    const actionId = HW_TUPLE_TO_ID.get(key);
+    if (actionId !== undefined) {
+      result[uiIdx] = actionId;
+    }
+  }
+
+  return result;
+}

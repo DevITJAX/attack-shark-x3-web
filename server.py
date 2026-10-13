@@ -96,11 +96,15 @@ class AttackSharkHardwareBridge:
         self.polling_rate = 1000
         self.last_events = []
         self.monitor_thread = None
+        self.feature_diag_cache = None
+        self.is_probing_features = False
         self.running = True
 
         self.discover_devices()
         self.start_input_monitor()
         self.query_battery()
+        self.start_feature_probe()
+
 
     def discover_devices(self):
         hid_guid = GUID()
@@ -277,6 +281,408 @@ class AttackSharkHardwareBridge:
                 "report_id": f"0x{packet_bytes[0]:02X}",
                 "hex": " ".join(f"{b:02X}" for b in packet_bytes),
             }
+
+    def read_feature_report(self, report_id, length):
+        """
+        Attempt HidD_GetFeature on col04 for the given report_id.
+
+        IMPORTANT (verified 2026-10-13):
+        The Attack Shark X3 firmware (PAW3395) exposes Feature Reports on col04
+        (UsagePage=0x000B, Usage=0x0000) as WRITE-ONLY. The firmware does not
+        implement the GET_FEATURE ioctl for configuration reports 0x04/0x05/0x06/0x08.
+        HidD_GetFeature returns True (ioctl succeeds at the driver level) but the
+        buffer is filled with zeros (or the last-written echo) and carries no live
+        profile data.
+
+        This is consistent with the official X3.exe behaviour: it reads the initial UI
+        state from %APPDATA%\\Attack SharkX3Mouse\\ms_1\\pro.data, NOT from HidD_GetFeature.
+
+        We call it here for diagnostic logging so the raw bytes are visible in the
+        Diagnostics tab, but we do NOT use the result to populate the profile.
+        """
+        if not self.feature_path:
+            return {"ok": False, "error": "Device not connected", "bytes": [], "hex": ""}
+
+        with self.lock:
+            h_feat = kernel32.CreateFileA(self.feature_path, 0xC0000000, 3, None, 3, 0, None)
+            if not h_feat or h_feat == 0xFFFFFFFFFFFFFFFF:
+                err = kernel32.GetLastError()
+                return {"ok": False, "error": f"CreateFileA failed: {err}", "bytes": [], "hex": ""}
+
+            buf = (ctypes.c_ubyte * length)()
+            buf[0] = report_id
+            ok = hid.HidD_GetFeature(h_feat, buf, length)
+            err = kernel32.GetLastError() if not ok else 0
+            kernel32.CloseHandle(h_feat)
+
+            raw = list(buf[:length])
+            return {
+                "ok": bool(ok),
+                "error_code": err,
+                "report_id": f"0x{report_id:02X}",
+                "length": length,
+                "bytes": raw,
+                "hex": " ".join(f"{b:02X}" for b in raw),
+                "note": "Write-only firmware: bytes are likely zeros (not live profile data). See docs/reverse-engineering.md §6.",
+            }
+
+    def start_feature_probe(self):
+        """Asynchronously probe reports 0x04, 0x05, 0x06, 0x08 without blocking caller."""
+        if self.is_probing_features or self.feature_diag_cache is not None:
+            return
+        def _worker():
+            self.is_probing_features = True
+            try:
+                self.probe_feature_reports()
+            finally:
+                self.is_probing_features = False
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
+    def probe_feature_reports(self):
+        """Query each feature report via HidD_GetFeature and cache diagnostic results."""
+        if not self.feature_path:
+            return []
+        diags = []
+        for (report_id, length, name) in [
+            (0x04, 56, "DPI & Sensor"),
+            (0x05, 15, "Debounce & Sleep"),
+            (0x06, 9,  "Polling Rate"),
+            (0x08, 59, "Button Mapping"),
+        ]:
+            diag = self.read_feature_report(report_id, length)
+            diag["name"] = name
+            diags.append(diag)
+        self.feature_diag_cache = diags
+        return diags
+
+    @staticmethod
+    def decode_feature_report_04(raw):
+        """Decode Report 0x04 (56 bytes) DPI & Sensor settings."""
+        if not raw or len(raw) < 52 or raw[0] != 0x04:
+            return None
+        lod = 2 if raw[3] == 1 else 1
+        motion_sync = bool(raw[4])
+        angle_snap = bool(raw[6])
+        ripple = bool(raw[7])
+        stages = []
+        for i in range(6):
+            step = raw[8 + i] | (raw[16 + i] << 8)
+            dpi = max(50, min(26000, (step + 1) * 50))
+            stages.append(dpi)
+        active_stage = max(0, min(5, (raw[24] & 0xFF) - 1))
+        stage_colors = []
+        for i in range(6):
+            r = raw[25 + i * 3]
+            g = raw[25 + i * 3 + 1]
+            b = raw[25 + i * 3 + 2]
+            stage_colors.append(f"#{r:02x}{g:02x}{b:02x}")
+        return {
+            "lod": lod,
+            "motionSync": motion_sync,
+            "angleSnap": angle_snap,
+            "rippleControl": ripple,
+            "stages": stages,
+            "activeStage": active_stage,
+            "stageColors": stage_colors,
+        }
+
+    @staticmethod
+    def decode_feature_report_05(raw):
+        """Decode Report 0x05 (15 bytes) debounce & sleep timer."""
+        if not raw or len(raw) < 11 or raw[0] != 0x05:
+            return None
+        sleep_minutes = max(1, min(30, int(raw[9])))
+        debounce_ms = max(2, min(20, int(raw[10]) * 2))
+        return {
+            "sleepMinutes": sleep_minutes,
+            "debounce": debounce_ms,
+        }
+
+    @staticmethod
+    def decode_feature_report_06(raw):
+        """Decode Report 0x06 (9 bytes) polling rate."""
+        if not raw or len(raw) < 5 or raw[0] != 0x06:
+            return None
+        code_map = {0x01: 1000, 0x02: 500, 0x03: 250, 0x08: 125}
+        return code_map.get(raw[3], 1000)
+
+    @staticmethod
+    def decode_feature_report_08(raw):
+        """Decode Report 0x08 (59 bytes) 18-slot button mapping."""
+        if not raw or len(raw) < 57 or raw[0] != 0x08:
+            return None
+        hw_to_id = {v: k for k, v in BUTTON_HW_MAP.items()}
+        slots = [(raw[3 + i * 3], raw[3 + i * 3 + 1], raw[3 + i * 3 + 2]) for i in range(18)]
+        # UI button index -> hardware slot: Left=0, Right=1, Middle=2, Forward=7, Backward=6
+        ui_slots = [0, 1, 2, 7, 6]
+        defaults = [1, 2, 3, 5, 4]
+        buttons = []
+        for idx, s_idx in enumerate(ui_slots):
+            tup = slots[s_idx]
+            buttons.append(hw_to_id.get(tup, defaults[idx]))
+        return buttons
+
+
+    @staticmethod
+    def _decode_pro_data_profile(data, base_offset):
+        """
+        Parse one profile struct from X3.exe's pro.data binary file.
+
+        Layout confirmed by binary analysis against live pro.data (2026-10-13):
+          +0x000 (LE u32): struct size (0x1A4 = 420 bytes)
+          +0x004 (LE u32): polling rate code (1=1000Hz, 2=500Hz, 3=250Hz, 8=125Hz)
+          +0x00C (LE u32): stage count (6)
+          +0x02C..+0x040 (6×LE u32): DPI steps for stages 1..6 ((DPI/50)-1)
+          +0x08C (LE u32): debounce in ms (raw value, e.g. 8)
+          +0x090 (LE u32): sleep timer index (matches pkt[9] in Report 0x05)
+          +0x094 (LE u32): pointer speed (1..20, OS only)
+          +0x098 (LE u32): LOD (1=1mm, 2=2mm)
+          +0x09C (LE u32): active DPI stage (0-based, 0..5)
+          +0x0A0 (LE u32): scroll lines (OS only)
+          +0x0B8 (LE u32): button slot 0 action ID (Middle Click = 3 by default)
+          +0x0BC (LE u32): button slot 1 action ID (Left Click = 1)
+          +0x0C0 (LE u32): button slot 2 action ID (Backward = 4)
+          +0x0C4..+0x0E0 (8×LE u32 as 0x00RRGGBB): stage LED colors
+        Motion Sync, Angle Snap, Ripple are NOT stored in pro.data (X3 UI only writes them to
+        hardware; they are not round-tripped through the file).
+        """
+        import struct as _struct
+
+        def u32(off):
+            return _struct.unpack_from("<I", data, base_offset + off)[0]
+
+        POLLING_CODE_TO_HZ = {1: 1000, 2: 500, 3: 250, 8: 125}
+
+        poll_code = u32(0x004)
+        polling_rate = POLLING_CODE_TO_HZ.get(poll_code, 1000)
+
+        stages = []
+        for i in range(6):
+            step = u32(0x02C + i * 4)
+            dpi = (step + 1) * 50
+            dpi = max(50, min(26000, dpi))
+            stages.append(dpi)
+
+        debounce = max(2, min(20, int(u32(0x08C))))
+        sleep_minutes = max(1, min(30, int(u32(0x090))))
+        pointer_speed = max(1, min(20, int(u32(0x094))))
+        lod = 2 if u32(0x098) == 2 else 1
+        active_stage = max(0, min(5, int(u32(0x09C))))
+        scroll_lines = max(1, min(10, int(u32(0x0A0))))
+
+        # Button action IDs (only 3 slots decoded in the struct; others use X3 UI defaults)
+        # Slot mapping reverse: pro.data stores action IDs that correspond to BUTTON_HW_MAP keys.
+        # +0x0B8 = Middle (3), +0x0BC = Left (1), +0x0C0 = Backward (4)
+        # The X3 UI hard-codes slot 0=Left, slot 1=Right, slot 7=Forward, slot 6=Backward in defaults.
+        raw_btn_0 = int(u32(0x0B8))  # historically Middle
+        raw_btn_1 = int(u32(0x0BC))  # historically Left
+        raw_btn_2 = int(u32(0x0C0))  # historically Backward
+        # We cannot reliably map these 3 raw values back to the 5 UI button array without
+        # additional context. Use X3 hardware defaults for unmapped buttons.
+        buttons = [1, 2, 3, 5, 4]  # Left, Right, Middle, Forward, Backward (defaults)
+
+        # Stage LED colors stored as 0x00RRGGBB little-endian uint32
+        stage_colors = []
+        default_colors = [
+            "#ff0000", "#00ff00", "#0000ff", "#ffff00",
+            "#00ffff", "#ff00ff", "#ff4000", "#ffffff"
+        ]
+        for i in range(6):
+            val = u32(0x0C4 + i * 4)
+            r = (val >> 16) & 0xFF
+            g = (val >> 8) & 0xFF
+            b = val & 0xFF
+            if r == 0 and g == 0 and b == 0:
+                stage_colors.append(default_colors[i])
+            else:
+                stage_colors.append(f"#{r:02x}{g:02x}{b:02x}")
+
+        return {
+            "stages": stages,
+            "stageColors": stage_colors,
+            "activeStage": active_stage,
+            "pollingRate": polling_rate,
+            "lod": lod,
+            "debounce": debounce,
+            "rippleControl": False,   # not stored in pro.data
+            "angleSnap": False,       # not stored in pro.data
+            "motionSync": False,      # not stored in pro.data
+            "sleepMinutes": sleep_minutes,
+            "pointerSpeed": pointer_speed,
+            "doubleClickSpeed": 500,  # OS-only, not in pro.data
+            "scrollLines": scroll_lines,
+            "buttons": buttons,
+        }
+
+    @staticmethod
+    def read_pro_data():
+        """
+        Read the official X3.exe profile binary from:
+          %APPDATA%\\Attack SharkX3Mouse\\ms_1\\pro.data
+
+        This is the canonical source of truth for onboard profile state.
+        The binary has one profile block per named profile (struct size 0x1A4).
+        Profile 1 (the first/default active profile) is at a fixed base offset
+        discovered by scanning for the 0x1A4 struct signature.
+        """
+        import os, struct as _struct
+
+        appdata = os.environ.get("APPDATA", "")
+        pro_data_path = os.path.join(appdata, "Attack SharkX3Mouse", "ms_1", "pro.data")
+
+        if not os.path.isfile(pro_data_path):
+            return None, f"pro.data not found at {pro_data_path}"
+
+        try:
+            with open(pro_data_path, "rb") as f:
+                data = f.read()
+        except OSError as e:
+            return None, f"Cannot read pro.data: {e}"
+
+        # Scan for the profile struct signature: LE u32 = 0x000001A4 (struct size 420)
+        STRUCT_SIG = 0x000001A4
+        base = None
+        for i in range(0, len(data) - 4, 4):
+            if _struct.unpack_from("<I", data, i)[0] == STRUCT_SIG:
+                base = i
+                break
+
+        if base is None:
+            return None, "pro.data: could not find profile struct signature (0x1A4)"
+
+        try:
+            profile = AttackSharkHardwareBridge._decode_pro_data_profile(data, base)
+            return profile, None
+        except Exception as e:
+            return None, f"pro.data decode error: {e}"
+
+    def read_profile(self, force_probe=False):
+        """
+        Read the current onboard profile and return a MouseProfileData-compatible dict.
+
+
+        Strategy (in order of reliability):
+        1. Parse %APPDATA%\\Attack SharkX3Mouse\\ms_1\\pro.data (primary, mirrors onboard flash)
+        2. Attempt HidD_GetFeature on each report (logged for diagnostics; data is unreliable
+           because the firmware is write-only on col04 — bytes are zeros or last-write echoes)
+        3. Return defaults with error flags if both fail
+        """
+        DEFAULT_PROFILE = {
+            "stages": [800, 1600, 2400, 3200, 5000, 26000],
+            "stageColors": ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#00ffff", "#ff00ff"],
+            "activeStage": 1,
+            "pollingRate": 1000,
+            "lod": 1,
+            "debounce": 8,
+            "rippleControl": False,
+            "angleSnap": False,
+            "motionSync": False,
+            "sleepMinutes": 1,
+            "pointerSpeed": 10,
+            "doubleClickSpeed": 500,
+            "scrollLines": 3,
+            "buttons": [1, 2, 3, 5, 4],
+        }
+
+        result = {
+            "source": "defaults",
+            "profile": dict(DEFAULT_PROFILE),
+            "reportsReadable": {
+                "0x04": False,
+                "0x05": False,
+                "0x06": False,
+                "0x08": False,
+            },
+            "rawReports": {
+                "0x04": None,
+                "0x05": None,
+                "0x06": None,
+                "0x08": None,
+            },
+            "proDataAvailable": False,
+            "proDataError": None,
+            "featureReadDiagnostics": [],
+            "warnings": [],
+        }
+
+        # --- Step 1: Initialize with pro.data if available ---
+        pro_profile, pro_error = self.read_pro_data()
+        if pro_profile is not None:
+            result["profile"] = pro_profile
+            result["source"] = "pro.data"
+            result["proDataAvailable"] = True
+        else:
+            result["proDataError"] = pro_error
+            result["warnings"].append(f"pro.data unavailable: {pro_error}")
+
+        # --- Step 2: Diagnostic HidD_GetFeature check ---
+        if not self.feature_path:
+            self.discover_devices()
+
+        if self.feature_path:
+            # Use cached feature diagnostics if available; otherwise trigger background probe
+            if force_probe:
+                diags = self.probe_feature_reports()
+            elif self.feature_diag_cache is not None:
+                diags = self.feature_diag_cache
+            else:
+                self.start_feature_probe()
+                diags = []
+
+            result["featureReadDiagnostics"] = diags
+
+            for diag in diags:
+                r_id = diag.get("report_id")
+                raw = diag.get("bytes", [])
+                non_zero = sum(1 for b in raw if b != 0)
+                is_readable = diag.get("ok", False) and non_zero > 1
+
+                if r_id == "0x04":
+                    result["rawReports"]["0x04"] = diag.get("hex", "")
+                    if is_readable:
+                        dec = self.decode_feature_report_04(raw)
+                        if dec:
+                            result["profile"].update(dec)
+                            result["reportsReadable"]["0x04"] = True
+                            result["source"] = "hardware"
+                elif r_id == "0x05":
+                    result["rawReports"]["0x05"] = diag.get("hex", "")
+                    if is_readable:
+                        dec = self.decode_feature_report_05(raw)
+                        if dec:
+                            result["profile"].update(dec)
+                            result["reportsReadable"]["0x05"] = True
+                            result["source"] = "hardware"
+                elif r_id == "0x06":
+                    result["rawReports"]["0x06"] = diag.get("hex", "")
+                    if is_readable:
+                        dec = self.decode_feature_report_06(raw)
+                        if dec:
+                            result["profile"]["pollingRate"] = dec
+                            result["reportsReadable"]["0x06"] = True
+                            result["source"] = "hardware"
+                elif r_id == "0x08":
+                    result["rawReports"]["0x08"] = diag.get("hex", "")
+                    if is_readable:
+                        dec = self.decode_feature_report_08(raw)
+                        if dec:
+                            result["profile"]["buttons"] = dec
+                            result["reportsReadable"]["0x08"] = True
+                            result["source"] = "hardware"
+
+                if not is_readable:
+                    err = diag.get("error_code")
+                    result["warnings"].append(
+                        f"HidD_GetFeature {r_id} ({diag.get('name')}): not readable from firmware "
+                        f"(err={err}{', timeout 121' if err == 121 else ''}; write-only channel). "
+                        f"Loaded from {'pro.data' if result['proDataAvailable'] else 'defaults'}."
+                    )
+        else:
+            result["warnings"].append("Mouse not connected; skipping HidD_GetFeature diagnostics.")
+
+        return result
+
 
     def query_battery(self):
         # 10-byte status query (0x0C, 0x0A, 0x01, 0xFE, 0x01, 0xFE, 0, 0, 0, 0)
@@ -505,7 +911,16 @@ class MouseRequestHandler(SimpleHTTPRequestHandler):
                 }
             )
             return
+
+        if self.path.startswith("/api/read-profile"):
+            force = "force=1" in self.path or "probe=1" in self.path
+            result = bridge.read_profile(force_probe=force)
+            self._send_json(result)
+            return
+
+
         return super().do_GET()
+
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
