@@ -1039,9 +1039,11 @@ if __name__ == "__main__":
     if sys.stderr is None:
         sys.stderr = open(os.devnull, "w")
     try:
+        HTTPServer.allow_reuse_address = True
         server = HTTPServer(("127.0.0.1", 3000), MouseRequestHandler)
         print("Attack Shark X3 Native-Web Server running on http://127.0.0.1:3000")
         server.serve_forever()
+
     except OSError:
         # Port 3000 is already bound by an active instance
         sys.exit(0)
